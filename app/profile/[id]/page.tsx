@@ -5,6 +5,7 @@ import Cropper from 'react-easy-crop'
 import { formatDistanceToNow, format, startOfMonth, endOfMonth, eachWeekOfInterval, startOfWeek, endOfWeek, addMonths, subMonths, isSameDay, eachDayOfInterval, differenceInMinutes, startOfDay } from 'date-fns'
 import { id as localeId } from 'date-fns/locale'
 import { useRouter } from 'next/navigation'
+import GlobalChat from '@/app/components/GlobalChat'
 
 // --- Utility Cropper ---
 const createImage = (url: string) =>
@@ -517,6 +518,8 @@ export default function ProfileDashboard({ params }: { params: Promise<{ id: str
           </div>
         </div>
       )}
+    {/* PASANG CHAT DI SINI */}
+      <GlobalChat currentProfileId={profileId} accentColor={t_accent} />
     </div>
   )
 }
