@@ -227,7 +227,7 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
 
   if (!isOpen) {
     return (
-      <button onClick={() => setIsOpen(true)} style={{ backgroundColor: accentColor }} className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full flex items-center justify-center text-2xl shadow-2xl hover:scale-110 transition text-[#0f1115] relative">
+      <button onClick={() => setIsOpen(true)} style={{ backgroundColor: accentColor }} className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full flex items-center justify-center text-2xl shadow-2xl hover:scale-110 transition text-[#0f1115]">
         💬
         {hasUnread && (
           <span className="absolute top-0 right-0 w-4 h-4 bg-red-600 border-2 border-[#0f1115] rounded-full animate-pulse"></span>
