@@ -75,7 +75,21 @@ export default function ProfileDashboard({ params }: { params: Promise<{ id: str
     const channel = supabase.channel('realtime_schedules').on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, () => fetchData()).subscribe()
     const profChannel = supabase.channel('realtime_profiles').on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${profileId}` }, () => fetchData()).subscribe()
 
-    return () => { clearInterval(timer); supabase.removeChannel(channel); supabase.removeChannel(profChannel) }
+    // --- PANCARKAN STATUS ONLINE PRESENCE ---
+    const presenceChannel = supabase.channel('online-users')
+    presenceChannel.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        // Beritahu Supabase bahwa profil ini sedang online!
+        await presenceChannel.track({ profile_id: profileId, online_at: new Date().toISOString() })
+      }
+    })
+
+    return () => { 
+      clearInterval(timer); 
+      supabase.removeChannel(channel); 
+      supabase.removeChannel(profChannel);
+      supabase.removeChannel(presenceChannel); 
+    }
   }, [profileId])
 
   const fetchData = async () => {
