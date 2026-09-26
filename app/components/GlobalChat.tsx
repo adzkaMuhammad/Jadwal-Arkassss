@@ -11,16 +11,12 @@ const VoiceNotePlayer = ({ url }: { url: string }) => {
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
 
-  // Tinggi acak untuk desain gelombang nada (waveform)
   const waveBars = [12, 18, 14, 24, 28, 16, 20, 26, 14, 18, 12, 16, 22, 14, 18]
 
   const togglePlay = () => {
     if (!audioRef.current) return
-    if (isPlaying) {
-      audioRef.current.pause()
-    } else {
-      audioRef.current.play()
-    }
+    if (isPlaying) audioRef.current.pause()
+    else audioRef.current.play()
     setIsPlaying(!isPlaying)
   }
 
@@ -30,10 +26,7 @@ const VoiceNotePlayer = ({ url }: { url: string }) => {
     setProgress((audioRef.current.currentTime / audioRef.current.duration) * 100)
   }
 
-  const onLoadedMetadata = () => {
-    if (audioRef.current) setDuration(audioRef.current.duration)
-  }
-
+  const onLoadedMetadata = () => { if (audioRef.current) setDuration(audioRef.current.duration) }
   const formatTime = (seconds: number) => {
     if (isNaN(seconds) || !isFinite(seconds)) return '0:00'
     const m = Math.floor(seconds / 60)
@@ -46,31 +39,15 @@ const VoiceNotePlayer = ({ url }: { url: string }) => {
       <button type="button" onClick={togglePlay} className="w-8 h-8 flex-shrink-0 bg-[#3797f0] hover:bg-blue-500 rounded-full flex items-center justify-center text-white transition shadow-sm text-xs">
         {isPlaying ? '⏸' : '▶'}
       </button>
-      
       <div className="flex-1 relative h-8 flex items-center cursor-pointer group">
-        
-        {/* Visualisasi Gelombang Nada yang Berubah Warna (Gaya IG/WA) */}
         <div className="absolute inset-0 flex items-center justify-between gap-[2px] px-1 pointer-events-none">
           {waveBars.map((h, i) => {
-            // Hitung persentase posisi batang ini
             const barPercent = (i / waveBars.length) * 100;
-            // Jika progres lagu melewati batang ini, warnai biru, jika belum warnai abu-abu
             const isFilled = progress > barPercent;
-            
-            return (
-              <div 
-                key={i} 
-                className={`w-[3px] rounded-full transition-colors duration-100 ${isFilled ? 'bg-[#3797f0]' : 'bg-gray-500/50'}`} 
-                style={{ height: `${h}px` }} 
-              />
-            )
+            return <div key={i} className={`w-[3px] rounded-full transition-colors duration-100 ${isFilled ? 'bg-[#3797f0]' : 'bg-gray-500/50'}`} style={{ height: `${h}px` }} />
           })}
         </div>
-        
-        {/* Slider tersembunyi agar bisa digeser maju/mundur dengan jari/mouse */}
-        <input 
-          type="range" min="0" max="100" value={progress || 0}
-          onChange={(e) => {
+        <input type="range" min="0" max="100" value={progress || 0} onChange={(e) => {
             if (audioRef.current) {
               const newTime = (Number(e.target.value) / 100) * audioRef.current.duration;
               audioRef.current.currentTime = newTime;
@@ -80,18 +57,13 @@ const VoiceNotePlayer = ({ url }: { url: string }) => {
           className="absolute inset-0 w-full opacity-0 cursor-pointer z-20"
         />
       </div>
-      
-      <span className="text-[10px] font-mono text-gray-300 w-7 text-right flex-shrink-0">
-        {formatTime(isPlaying ? currentTime : duration)}
-      </span>
-      
+      <span className="text-[10px] font-mono text-gray-300 w-7 text-right flex-shrink-0">{formatTime(isPlaying ? currentTime : duration)}</span>
       <audio ref={audioRef} src={url} onTimeUpdate={onTimeUpdate} onLoadedMetadata={onLoadedMetadata} onEnded={() => setIsPlaying(false)} className="hidden" />
     </div>
   )
 }
-// --- AKHIR KOMPONEN AUDIO ---
 
-
+// --- KOMPONEN UTAMA CHAT ---
 export default function GlobalChat({ currentProfileId, accentColor }: { currentProfileId: string, accentColor: string }) {
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState<any[]>([])
@@ -111,7 +83,7 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
   const fileInputRef = useRef<HTMLInputElement>(null)
   const docInputRef = useRef<HTMLInputElement>(null)
   
-  const emojis = [
+ const emojis = [
   // Gestur & Tangan (Termasuk daftar asli)
   '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤝', '🙏', '👏', '🙌', '👐', '💪', '👋', '🤙', '👆', '👇', '👈', '👉',
 
@@ -148,6 +120,18 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
     if (isOpen) scrollToBottom()
   }, [messages, isOpen])
 
+  // LOGIKA BACA PESAN (READ RECEIPTS)
+  useEffect(() => {
+    if (isOpen && messages.length > 0) {
+      const lastMsg = messages[messages.length - 1]
+      // Jika pesan terakhir bukan milik kita dan ID kita belum ada di daftar seen_by
+      if (lastMsg.profile_id !== currentProfileId && !(lastMsg.seen_by || []).includes(currentProfileId)) {
+        const newSeenBy = [...(lastMsg.seen_by || []), currentProfileId]
+        supabase.from('messages').update({ seen_by: newSeenBy }).eq('id', lastMsg.id).then()
+      }
+    }
+  }, [isOpen, messages, currentProfileId])
+
   const fetchInitialData = async () => {
     const { data: profData } = await supabase.from('profiles').select('*')
     if (profData) {
@@ -163,7 +147,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim()) return
-
     if (editId) {
       await supabase.from('messages').update({ content: input, is_edited: true }).eq('id', editId)
     } else {
@@ -237,9 +220,19 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
     if(confirm('Hapus pesan ini?')) await supabase.from('messages').delete().eq('id', id)
   }
 
+  // Cek apakah ada pesan baru untuk lencana merah
+  const hasUnread = messages.length > 0 && 
+                    messages[messages.length - 1].profile_id !== currentProfileId && 
+                    !(messages[messages.length - 1].seen_by || []).includes(currentProfileId)
+
   if (!isOpen) {
     return (
-      <button onClick={() => setIsOpen(true)} style={{ backgroundColor: accentColor }} className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full flex items-center justify-center text-2xl shadow-2xl hover:scale-110 transition text-[#0f1115]">💬</button>
+      <button onClick={() => setIsOpen(true)} style={{ backgroundColor: accentColor }} className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full flex items-center justify-center text-2xl shadow-2xl hover:scale-110 transition text-[#0f1115] relative">
+        💬
+        {hasUnread && (
+          <span className="absolute top-0 right-0 w-4 h-4 bg-red-600 border-2 border-[#0f1115] rounded-full animate-pulse"></span>
+        )}
+      </button>
     )
   }
 
@@ -255,10 +248,11 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#0f1115]">
-        {messages.map(msg => {
+        {messages.map((msg, idx) => {
           const isMe = msg.profile_id === currentProfileId
           const sender = profiles[msg.profile_id]
           const repliedMsg = msg.reply_to_id ? messages.find(m => m.id === msg.reply_to_id) : null
+          const isLastMessage = idx === messages.length - 1
 
           return (
             <div key={msg.id} className={`flex gap-2 ${isMe ? 'flex-row-reverse' : 'flex-row'} group items-end`}>
@@ -279,7 +273,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
                     </div>
                   )}
                   
-                  {/* Render Media */}
                   {msg.image_url && <img src={msg.image_url} alt="gambar" className="w-full rounded-md mb-1 max-h-[200px] object-cover cursor-pointer" onClick={() => window.open(msg.image_url, '_blank')} />}
                   
                   {msg.file_url && (
@@ -288,7 +281,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
                     </a>
                   )}
 
-                  {/* PANGGIL KOMPONEN CUSTOM VOICE NOTE DI SINI */}
                   {msg.audio_url && <VoiceNotePlayer url={msg.audio_url} />}
 
                   {(!msg.image_url && !msg.file_url && !msg.audio_url) && <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>}
@@ -308,6 +300,21 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
                      )}
                   </div>
                 </div>
+
+                {/* AVATAR KECIL (READ RECEIPTS) DI BAWAH PESAN */}
+                {isMe && isLastMessage && msg.seen_by && msg.seen_by.length > 0 && (
+                  <div className="flex justify-end gap-1 mt-1 mr-1">
+                    {msg.seen_by.map((id: string) => (
+                      <div key={id} title={profiles[id]?.name} className="w-[14px] h-[14px] rounded-full overflow-hidden bg-gray-600 border border-[#0f1115]">
+                        {profiles[id]?.avatar_url ? (
+                          <img src={profiles[id].avatar_url} className="w-full h-full object-cover" alt="seen" />
+                        ) : (
+                          <span className="text-[7px] flex items-center justify-center h-full text-white">{profiles[id]?.name?.charAt(0).toUpperCase()}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )
@@ -343,29 +350,15 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
 
         <form onSubmit={handleSubmit} className="flex gap-2 items-end">
           <button type="button" onClick={() => setShowEmoji(!showEmoji)} className={`p-2 hover:opacity-100 text-lg transition ${showEmoji ? 'opacity-100 scale-110' : 'opacity-50'}`}>😀</button>
-          
           <button type="button" onClick={() => fileInputRef.current?.click()} className="p-2 opacity-50 hover:opacity-100 text-lg transition" title="Kirim Gambar">📷</button>
           <input type="file" accept="image/*" hidden ref={fileInputRef} onChange={handleImageUpload} />
-
           <button type="button" onClick={() => docInputRef.current?.click()} className="p-2 opacity-50 hover:opacity-100 text-lg transition" title="Kirim File">📎</button>
           <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.zip" hidden ref={docInputRef} onChange={handleDocUpload} />
-
           <textarea value={input} onChange={e => setInput(e.target.value)} placeholder={isRecording ? "Merekam suara..." : "Ketik pesan..."} className="flex-1 bg-gray-800 text-sm text-white p-2 rounded-lg resize-none outline-none border border-transparent focus:border-gray-500 h-[40px] max-h-[100px]" onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e) } }} disabled={isRecording} />
-          
           {input.trim() ? (
              <button type="submit" style={{ backgroundColor: accentColor }} className="p-2 rounded-lg text-[#0f1115] shadow-md">➤</button>
           ) : (
-             <button 
-               type="button" 
-               onClick={toggleRecording} 
-               className={`p-2 rounded-full text-white shadow-md transition-all duration-300 flex items-center justify-center ${
-                 isRecording 
-                   ? 'bg-red-500 scale-125 animate-pulse ring-4 ring-red-500/50 mr-1' 
-                   : 'bg-gray-700 hover:bg-gray-600'
-               }`}
-             >
-               🎤
-             </button>
+             <button type="button" onClick={toggleRecording} className={`p-2 rounded-full text-white shadow-md transition-all duration-300 flex items-center justify-center ${isRecording ? 'bg-red-500 scale-125 animate-pulse ring-4 ring-red-500/50 mr-1' : 'bg-gray-700 hover:bg-gray-600'}`}>🎤</button>
           )}
         </form>
       </div>
