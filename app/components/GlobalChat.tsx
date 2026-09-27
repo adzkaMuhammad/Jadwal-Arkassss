@@ -83,7 +83,7 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
   const [typingUsers, setTypingUsers] = useState<string[]>([])
   const typingChannelRef = useRef<any>(null)
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const isTypingRef = useRef(false) // Mencegah spam sinyal ke server
+  const isTypingRef = useRef(false)
 
   const endOfMessagesRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -120,7 +120,7 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
         if (payload.eventType === 'DELETE') setMessages(prev => prev.filter(m => m.id !== payload.old.id))
       }).subscribe()
 
-    // --- SETUP CHANNEL "TYPING" DENGAN KEY SPESIFIK ---
+    // --- SETUP CHANNEL "TYPING" FINAL FIX ---
     const typingChannel = supabase.channel('chat-typing', {
       config: { presence: { key: currentProfileId } }
     })
@@ -131,14 +131,18 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
         const currentlyTyping: string[] = []
         for (const key in state) {
           const presences = state[key] as any[]
-          // Cek agar tidak memunculkan indikator diri sendiri
           if (presences.length > 0 && presences[0].typing && presences[0].profile_id !== currentProfileId) {
             currentlyTyping.push(presences[0].profile_id)
           }
         }
         setTypingUsers(currentlyTyping)
       })
-      .subscribe()
+      .subscribe(async (status) => {
+        // PERBAIKAN: Inisialisasi status "tidak mengetik" saat channel terhubung
+        if (status === 'SUBSCRIBED') {
+          await typingChannel.track({ profile_id: currentProfileId, typing: false })
+        }
+      })
       
     typingChannelRef.current = typingChannel
 
@@ -174,19 +178,15 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
 
   const scrollToBottom = () => endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' })
 
-  // --- FUNGSI ANTI-SPAM UNTUK TYPING INDICATOR ---
+  // --- LOGIKA CERDAS ANTI-SPAM & HAPUS KETIKAN ---
   const triggerTyping = () => {
     if (typingChannelRef.current) {
-      // 1. Jika statusnya BELUM ngetik, kirim sinyal ngetik (1 kali saja)
       if (!isTypingRef.current) {
         isTypingRef.current = true
         typingChannelRef.current.track({ profile_id: currentProfileId, typing: true }).catch(() => {})
       }
       
-      // 2. Hapus timer lama
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
-      
-      // 3. Buat timer baru: jika diam 2 detik, hilangkan status ngetik
       typingTimeoutRef.current = setTimeout(() => {
         isTypingRef.current = false
         typingChannelRef.current?.track({ profile_id: currentProfileId, typing: false }).catch(() => {})
@@ -195,8 +195,19 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value)
-    triggerTyping() // Panggil fungsi cerdas anti-spam
+    const val = e.target.value
+    setInput(val)
+
+    // PERBAIKAN: Jika teks dihapus sampai kosong, langsung matikan animasi mengetik
+    if (val.trim() === '') {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+      if (isTypingRef.current) {
+        isTypingRef.current = false
+        typingChannelRef.current?.track({ profile_id: currentProfileId, typing: false }).catch(() => {})
+      }
+    } else {
+      triggerTyping() 
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -421,7 +432,7 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
               {emojis.map((e, idx) => (
                 <button key={idx} type="button" onClick={() => {
                   setInput(prev => prev + e)
-                  triggerTyping() // Cerdas! Jika klik emoji, artinya juga sedang ngetik
+                  triggerTyping() 
                 }} className="text-xl hover:scale-125 py-1 hover:bg-gray-700 rounded">{e}</button>
               ))}
             </div>
