@@ -169,11 +169,20 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
   const fetchInitialData = async () => {
     const { data: profData } = await supabase.from('profiles').select('*')
     if (profData) {
-      const profMap = profData.reduce((acc, p) => ({ ...acc, [p.id]: p }), {})
+      const profMap = profData.reduce((acc: any, p: any) => ({ ...acc, [p.id]: p }), {})
       setProfiles(profMap)
     }
-    const { data: msgData } = await supabase.from('messages').select('*').order('created_at', { ascending: true }).limit(100)
-    if (msgData) setMessages(msgData)
+    
+    // PERBAIKAN: Ambil 100 pesan TERBARU (ascending: false), lalu balik array-nya (reverse)
+    const { data: msgData } = await supabase
+      .from('messages')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100)
+      
+    if (msgData) {
+      setMessages(msgData.reverse())
+    }
   }
 
   const scrollToBottom = () => endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' })
