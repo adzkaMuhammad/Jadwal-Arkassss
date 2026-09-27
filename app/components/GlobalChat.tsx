@@ -85,7 +85,13 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isTypingRef = useRef(false)
 
+  // STATE & REF UNTUK PAGINATION (LOAD PESAN LAMA)
+  const [page, setPage] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const chatContainerRef = useRef<HTMLDivElement>(null)
   const endOfMessagesRef = useRef<HTMLDivElement>(null)
+  
   const fileInputRef = useRef<HTMLInputElement>(null)
   const docInputRef = useRef<HTMLInputElement>(null)
   
@@ -120,7 +126,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
         if (payload.eventType === 'DELETE') setMessages(prev => prev.filter(m => m.id !== payload.old.id))
       }).subscribe()
 
-    // --- SETUP CHANNEL "TYPING" FINAL FIX ---
     const typingChannel = supabase.channel('chat-typing', {
       config: { presence: { key: currentProfileId } }
     })
@@ -138,7 +143,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
         setTypingUsers(currentlyTyping)
       })
       .subscribe(async (status) => {
-        // PERBAIKAN: Inisialisasi status "tidak mengetik" saat channel terhubung
         if (status === 'SUBSCRIBED') {
           await typingChannel.track({ profile_id: currentProfileId, typing: false })
         }
@@ -153,7 +157,19 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
   }, [currentProfileId])
 
   useEffect(() => {
-    if (isOpen) scrollToBottom()
+    if (isOpen) {
+      const container = chatContainerRef.current;
+      if (!container) return;
+      
+      // LOGIKA SCROLL CERDAS:
+      // Hanya auto-scroll ke bawah JIKA user sedang berada di bagian paling bawah
+      // ATAU jika ini adalah pertama kali pesan di-load (page 0)
+      const isNearBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 200;
+      
+      if (isNearBottom || page === 0) {
+        scrollToBottom();
+      }
+    }
   }, [messages, isOpen, typingUsers])
 
   useEffect(() => {
@@ -173,21 +189,62 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
       setProfiles(profMap)
     }
     
-    // PERBAIKAN: Ambil 100 pesan TERBARU (ascending: false), lalu balik array-nya (reverse)
+    // AMBIL 50 PESAN TERBARU SAAT PERTAMA KALI BUKA
     const { data: msgData } = await supabase
       .from('messages')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(100)
+      .range(0, 49)
       
     if (msgData) {
       setMessages(msgData.reverse())
+      if (msgData.length < 50) setHasMore(false)
+    }
+  }
+
+  // --- FUNGSI INFINITE SCROLL (LOAD PESAN LAMA) ---
+  const handleScroll = async (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    
+    // Jika user men-scroll mentok ke atas (scrollTop = 0) dan masih ada pesan lama
+    if (target.scrollTop === 0 && hasMore && !isLoadingMore) {
+      setIsLoadingMore(true);
+      const nextPage = page + 1;
+      const from = nextPage * 50;
+      const to = from + 49;
+
+      // Catat tinggi kontainer sebelum pesan lama ditambahkan
+      const previousScrollHeight = target.scrollHeight;
+
+      const { data: moreMsgs } = await supabase
+        .from('messages')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(from, to)
+
+      if (moreMsgs && moreMsgs.length > 0) {
+        // Balikkan urutannya dan tambahkan di DEPAN array yang lama
+        const reversed = moreMsgs.reverse();
+        setMessages(prev => [...reversed, ...prev]);
+        setPage(nextPage);
+        
+        if (moreMsgs.length < 50) setHasMore(false);
+        
+        // Jaga posisi scroll agar layar tidak lompat seketika ke atas
+        setTimeout(() => {
+          if (chatContainerRef.current) {
+            chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight - previousScrollHeight;
+          }
+        }, 0);
+      } else {
+        setHasMore(false);
+      }
+      setIsLoadingMore(false);
     }
   }
 
   const scrollToBottom = () => endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' })
 
-  // --- LOGIKA CERDAS ANTI-SPAM & HAPUS KETIKAN ---
   const triggerTyping = () => {
     if (typingChannelRef.current) {
       if (!isTypingRef.current) {
@@ -206,8 +263,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value
     setInput(val)
-
-    // PERBAIKAN: Jika teks dihapus sampai kosong, langsung matikan animasi mengetik
     if (val.trim() === '') {
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
       if (isTypingRef.current) {
@@ -223,7 +278,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
     e.preventDefault()
     if (!input.trim()) return
 
-    // Hapus status typing seketika setelah kirim pesan
     if (typingChannelRef.current && isTypingRef.current) {
       isTypingRef.current = false
       typingChannelRef.current.track({ profile_id: currentProfileId, typing: false }).catch(() => {})
@@ -326,7 +380,16 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
         <button onClick={() => setIsOpen(false)} className="opacity-70 hover:opacity-100 font-bold text-xl">&times;</button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#0f1115]">
+      {/* Ttambah REFS & ONSCROLL disini */}
+      <div ref={chatContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#0f1115]">
+        
+        {/* INDIKATOR LOADING SAAT SCROLL KE ATAS */}
+        {isLoadingMore && (
+          <div className="text-center py-2 text-[10px] text-gray-500 font-bold tracking-widest uppercase animate-pulse">
+            Mengambil pesan lama...
+          </div>
+        )}
+
         {messages.map((msg, idx) => {
           const isMe = msg.profile_id === currentProfileId
           const sender = profiles[msg.profile_id]
@@ -395,7 +458,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
           )
         })}
 
-        {/* --- TAMPILAN ANIMASI SEDANG MENGETIK ALA IG --- */}
         {typingUsers.length > 0 && (
           <div className="flex gap-2 items-end">
             <div className="w-8 h-8 rounded-full bg-gray-800 flex-shrink-0 border border-gray-600 overflow-hidden flex items-center justify-center">
