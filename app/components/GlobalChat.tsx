@@ -83,6 +83,7 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
   const [typingUsers, setTypingUsers] = useState<string[]>([])
   const typingChannelRef = useRef<any>(null)
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isTypingRef = useRef(false) // Mencegah spam sinyal ke server
 
   const endOfMessagesRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -119,14 +120,18 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
         if (payload.eventType === 'DELETE') setMessages(prev => prev.filter(m => m.id !== payload.old.id))
       }).subscribe()
 
-    // --- SETUP CHANNEL "TYPING" ---
-    const typingChannel = supabase.channel('chat-typing')
+    // --- SETUP CHANNEL "TYPING" DENGAN KEY SPESIFIK ---
+    const typingChannel = supabase.channel('chat-typing', {
+      config: { presence: { key: currentProfileId } }
+    })
+    
     typingChannel
       .on('presence', { event: 'sync' }, () => {
         const state = typingChannel.presenceState()
         const currentlyTyping: string[] = []
         for (const key in state) {
           const presences = state[key] as any[]
+          // Cek agar tidak memunculkan indikator diri sendiri
           if (presences.length > 0 && presences[0].typing && presences[0].profile_id !== currentProfileId) {
             currentlyTyping.push(presences[0].profile_id)
           }
@@ -134,17 +139,18 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
         setTypingUsers(currentlyTyping)
       })
       .subscribe()
+      
     typingChannelRef.current = typingChannel
 
     return () => { 
       supabase.removeChannel(channel)
       supabase.removeChannel(typingChannel) 
     }
-  }, [])
+  }, [currentProfileId])
 
   useEffect(() => {
     if (isOpen) scrollToBottom()
-  }, [messages, isOpen, typingUsers]) // Tambah typingUsers agar otomatis scroll kebawah pas indikator muncul
+  }, [messages, isOpen, typingUsers])
 
   useEffect(() => {
     if (isOpen && messages.length > 0) {
@@ -168,28 +174,38 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
 
   const scrollToBottom = () => endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' })
 
-  // --- LOGIKA DETEKSI KETIKAN ---
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value)
-
+  // --- FUNGSI ANTI-SPAM UNTUK TYPING INDICATOR ---
+  const triggerTyping = () => {
     if (typingChannelRef.current) {
-      // Pancarkan status sedang mengetik
-      typingChannelRef.current.track({ profile_id: currentProfileId, typing: true }).catch(() => {})
+      // 1. Jika statusnya BELUM ngetik, kirim sinyal ngetik (1 kali saja)
+      if (!isTypingRef.current) {
+        isTypingRef.current = true
+        typingChannelRef.current.track({ profile_id: currentProfileId, typing: true }).catch(() => {})
+      }
       
-      // Reset timeout agar status mengetik hilang setelah 2 detik tidak ada ketikan
+      // 2. Hapus timer lama
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+      
+      // 3. Buat timer baru: jika diam 2 detik, hilangkan status ngetik
       typingTimeoutRef.current = setTimeout(() => {
+        isTypingRef.current = false
         typingChannelRef.current?.track({ profile_id: currentProfileId, typing: false }).catch(() => {})
       }, 2000)
     }
+  }
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value)
+    triggerTyping() // Panggil fungsi cerdas anti-spam
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim()) return
 
-    // Hapus status typing setelah kirim pesan
-    if (typingChannelRef.current) {
+    // Hapus status typing seketika setelah kirim pesan
+    if (typingChannelRef.current && isTypingRef.current) {
+      isTypingRef.current = false
       typingChannelRef.current.track({ profile_id: currentProfileId, typing: false }).catch(() => {})
     }
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
@@ -371,8 +387,8 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
             </div>
             <div className="bg-gray-900 text-gray-400 text-xs rounded-xl rounded-bl-none px-4 py-2 border border-gray-800 shadow-sm flex items-center gap-1 h-[35px]">
               <span className="font-bold text-gray-300">{typingUsers.map(id => profiles[id]?.name).join(', ')}</span> 
-              <span>mengetik</span>
-              <div className="flex gap-[2px] ml-1 mb-1">
+              <span className="mr-1">mengetik</span>
+              <div className="flex gap-[2px] mb-1">
                 <span className="w-1 h-1 bg-gray-400 rounded-full animate-bounce"></span>
                 <span className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
                 <span className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
@@ -405,8 +421,7 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
               {emojis.map((e, idx) => (
                 <button key={idx} type="button" onClick={() => {
                   setInput(prev => prev + e)
-                  // Saat klik emoji, anggap juga sedang mengetik
-                  if (typingChannelRef.current) typingChannelRef.current.track({ profile_id: currentProfileId, typing: true }).catch(()=>{})
+                  triggerTyping() // Cerdas! Jika klik emoji, artinya juga sedang ngetik
                 }} className="text-xl hover:scale-125 py-1 hover:bg-gray-700 rounded">{e}</button>
               ))}
             </div>
@@ -421,7 +436,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
           <button type="button" onClick={() => docInputRef.current?.click()} className="p-2 opacity-50 hover:opacity-100 text-lg transition" title="Kirim File">📎</button>
           <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.zip" hidden ref={docInputRef} onChange={handleDocUpload} />
           
-          {/* PERUBAHAN DI SINI: onChange diganti menggunakan handleInputChange untuk mendeteksi ketikan */}
           <textarea 
             value={input} 
             onChange={handleInputChange} 
