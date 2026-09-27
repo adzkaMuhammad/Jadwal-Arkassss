@@ -79,11 +79,16 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   
+  // STATE & REF UNTUK FITUR "SEDANG MENGETIK..."
+  const [typingUsers, setTypingUsers] = useState<string[]>([])
+  const typingChannelRef = useRef<any>(null)
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
   const endOfMessagesRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const docInputRef = useRef<HTMLInputElement>(null)
   
- const emojis = [
+  const emojis = [
   // Gestur & Tangan (Termasuk daftar asli)
   '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤝', '🙏', '👏', '🙌', '👐', '💪', '👋', '🤙', '👆', '👇', '👈', '👉',
 
@@ -113,18 +118,37 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
         if (payload.eventType === 'UPDATE') setMessages(prev => prev.map(m => m.id === payload.new.id ? payload.new : m))
         if (payload.eventType === 'DELETE') setMessages(prev => prev.filter(m => m.id !== payload.old.id))
       }).subscribe()
-    return () => { supabase.removeChannel(channel) }
+
+    // --- SETUP CHANNEL "TYPING" ---
+    const typingChannel = supabase.channel('chat-typing')
+    typingChannel
+      .on('presence', { event: 'sync' }, () => {
+        const state = typingChannel.presenceState()
+        const currentlyTyping: string[] = []
+        for (const key in state) {
+          const presences = state[key] as any[]
+          if (presences.length > 0 && presences[0].typing && presences[0].profile_id !== currentProfileId) {
+            currentlyTyping.push(presences[0].profile_id)
+          }
+        }
+        setTypingUsers(currentlyTyping)
+      })
+      .subscribe()
+    typingChannelRef.current = typingChannel
+
+    return () => { 
+      supabase.removeChannel(channel)
+      supabase.removeChannel(typingChannel) 
+    }
   }, [])
 
   useEffect(() => {
     if (isOpen) scrollToBottom()
-  }, [messages, isOpen])
+  }, [messages, isOpen, typingUsers]) // Tambah typingUsers agar otomatis scroll kebawah pas indikator muncul
 
-  // LOGIKA BACA PESAN (READ RECEIPTS)
   useEffect(() => {
     if (isOpen && messages.length > 0) {
       const lastMsg = messages[messages.length - 1]
-      // Jika pesan terakhir bukan milik kita dan ID kita belum ada di daftar seen_by
       if (lastMsg.profile_id !== currentProfileId && !(lastMsg.seen_by || []).includes(currentProfileId)) {
         const newSeenBy = [...(lastMsg.seen_by || []), currentProfileId]
         supabase.from('messages').update({ seen_by: newSeenBy }).eq('id', lastMsg.id).then()
@@ -144,9 +168,32 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
 
   const scrollToBottom = () => endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' })
 
+  // --- LOGIKA DETEKSI KETIKAN ---
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value)
+
+    if (typingChannelRef.current) {
+      // Pancarkan status sedang mengetik
+      typingChannelRef.current.track({ profile_id: currentProfileId, typing: true }).catch(() => {})
+      
+      // Reset timeout agar status mengetik hilang setelah 2 detik tidak ada ketikan
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+      typingTimeoutRef.current = setTimeout(() => {
+        typingChannelRef.current?.track({ profile_id: currentProfileId, typing: false }).catch(() => {})
+      }, 2000)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim()) return
+
+    // Hapus status typing setelah kirim pesan
+    if (typingChannelRef.current) {
+      typingChannelRef.current.track({ profile_id: currentProfileId, typing: false }).catch(() => {})
+    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current)
+
     if (editId) {
       await supabase.from('messages').update({ content: input, is_edited: true }).eq('id', editId)
     } else {
@@ -159,7 +206,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
     const file = e.target.files?.[0]
     if (!file) return
     if (file.size > 2 * 1024 * 1024) { alert("Maksimal gambar 2MB."); return }
-
     setIsUploading(true)
     const fileName = `${currentProfileId}-${Date.now()}.jpg`
     const { error } = await supabase.storage.from('chat_images').upload(fileName, file)
@@ -174,7 +220,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
     const file = e.target.files?.[0]
     if (!file) return
     if (file.size > 5 * 1024 * 1024) { alert("Maksimal file dokumen 5MB."); return }
-
     setIsUploading(true)
     const fileName = `${currentProfileId}-${Date.now()}-${file.name}`
     const { error } = await supabase.storage.from('chat_files').upload(fileName, file)
@@ -195,7 +240,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
         mediaRecorderRef.current = new MediaRecorder(stream)
         audioChunksRef.current = []
-
         mediaRecorderRef.current.ondataavailable = (e) => audioChunksRef.current.push(e.data)
         mediaRecorderRef.current.onstop = async () => {
           setIsUploading(true)
@@ -220,7 +264,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
     if(confirm('Hapus pesan ini?')) await supabase.from('messages').delete().eq('id', id)
   }
 
-  // Cek apakah ada pesan baru untuk lencana merah
   const hasUnread = messages.length > 0 && 
                     messages[messages.length - 1].profile_id !== currentProfileId && 
                     !(messages[messages.length - 1].seen_by || []).includes(currentProfileId)
@@ -274,15 +317,12 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
                   )}
                   
                   {msg.image_url && <img src={msg.image_url} alt="gambar" className="w-full rounded-md mb-1 max-h-[200px] object-cover cursor-pointer" onClick={() => window.open(msg.image_url, '_blank')} />}
-                  
                   {msg.file_url && (
                     <a href={msg.file_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-black/20 p-2 rounded border border-gray-600 hover:bg-black/40 text-sm mb-1 transition">
                       <span className="text-xl">📄</span> <span className="line-clamp-1 break-all">{msg.file_name}</span>
                     </a>
                   )}
-
                   {msg.audio_url && <VoiceNotePlayer url={msg.audio_url} />}
-
                   {(!msg.image_url && !msg.file_url && !msg.audio_url) && <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>}
                   
                   <div className={`flex items-center gap-1 mt-1 opacity-50 text-[9px] ${isMe ? 'justify-end' : 'justify-start'}`}>
@@ -301,7 +341,6 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
                   </div>
                 </div>
 
-                {/* AVATAR KECIL (READ RECEIPTS) DI BAWAH PESAN */}
                 {isMe && isLastMessage && msg.seen_by && msg.seen_by.length > 0 && (
                   <div className="flex justify-end gap-1 mt-1 mr-1">
                     {msg.seen_by.map((id: string) => (
@@ -319,6 +358,29 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
             </div>
           )
         })}
+
+        {/* --- TAMPILAN ANIMASI SEDANG MENGETIK ALA IG --- */}
+        {typingUsers.length > 0 && (
+          <div className="flex gap-2 items-end">
+            <div className="w-8 h-8 rounded-full bg-gray-800 flex-shrink-0 border border-gray-600 overflow-hidden flex items-center justify-center">
+               {profiles[typingUsers[0]]?.avatar_url ? (
+                  <img src={profiles[typingUsers[0]].avatar_url} className="w-full h-full object-cover" alt="PP" />
+               ) : (
+                  <span className="text-xs font-bold text-gray-400">{profiles[typingUsers[0]]?.name?.charAt(0).toUpperCase()}</span>
+               )}
+            </div>
+            <div className="bg-gray-900 text-gray-400 text-xs rounded-xl rounded-bl-none px-4 py-2 border border-gray-800 shadow-sm flex items-center gap-1 h-[35px]">
+              <span className="font-bold text-gray-300">{typingUsers.map(id => profiles[id]?.name).join(', ')}</span> 
+              <span>mengetik</span>
+              <div className="flex gap-[2px] ml-1 mb-1">
+                <span className="w-1 h-1 bg-gray-400 rounded-full animate-bounce"></span>
+                <span className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                <span className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div ref={endOfMessagesRef} />
         {isUploading && <div className="text-xs text-center opacity-50 font-bold animate-pulse">Mengunggah file...</div>}
       </div>
@@ -341,7 +403,11 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
             </div>
             <div className="grid grid-cols-6 gap-2 max-h-[200px] overflow-y-auto pr-1 custom-scrollbar">
               {emojis.map((e, idx) => (
-                <button key={idx} type="button" onClick={() => setInput(prev => prev + e)} className="text-xl hover:scale-125 py-1 hover:bg-gray-700 rounded">{e}</button>
+                <button key={idx} type="button" onClick={() => {
+                  setInput(prev => prev + e)
+                  // Saat klik emoji, anggap juga sedang mengetik
+                  if (typingChannelRef.current) typingChannelRef.current.track({ profile_id: currentProfileId, typing: true }).catch(()=>{})
+                }} className="text-xl hover:scale-125 py-1 hover:bg-gray-700 rounded">{e}</button>
               ))}
             </div>
             <div className="absolute -bottom-2 left-6 w-4 h-4 bg-[#1e212b] border-b border-r border-gray-700 transform rotate-45"></div>
@@ -354,7 +420,17 @@ export default function GlobalChat({ currentProfileId, accentColor }: { currentP
           <input type="file" accept="image/*" hidden ref={fileInputRef} onChange={handleImageUpload} />
           <button type="button" onClick={() => docInputRef.current?.click()} className="p-2 opacity-50 hover:opacity-100 text-lg transition" title="Kirim File">📎</button>
           <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.zip" hidden ref={docInputRef} onChange={handleDocUpload} />
-          <textarea value={input} onChange={e => setInput(e.target.value)} placeholder={isRecording ? "Merekam suara..." : "Ketik pesan..."} className="flex-1 bg-gray-800 text-sm text-white p-2 rounded-lg resize-none outline-none border border-transparent focus:border-gray-500 h-[40px] max-h-[100px]" onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e) } }} disabled={isRecording} />
+          
+          {/* PERUBAHAN DI SINI: onChange diganti menggunakan handleInputChange untuk mendeteksi ketikan */}
+          <textarea 
+            value={input} 
+            onChange={handleInputChange} 
+            placeholder={isRecording ? "Merekam suara..." : "Ketik pesan..."} 
+            className="flex-1 bg-gray-800 text-sm text-white p-2 rounded-lg resize-none outline-none border border-transparent focus:border-gray-500 h-[40px] max-h-[100px]" 
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e) } }} 
+            disabled={isRecording} 
+          />
+          
           {input.trim() ? (
              <button type="submit" style={{ backgroundColor: accentColor }} className="p-2 rounded-lg text-[#0f1115] shadow-md">➤</button>
           ) : (
