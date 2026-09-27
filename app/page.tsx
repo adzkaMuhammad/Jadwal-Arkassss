@@ -14,32 +14,22 @@ export default function Home() {
     fetchProfiles()
 
     // --- LOGIKA PRESENCE (CEK SIAPA YANG ONLINE) ---
-    // Kita buat channel khusus bernama 'online-users'
     const room = supabase.channel('online-users')
 
     room
       .on('presence', { event: 'sync' }, () => {
-        // Ambil semua state presence saat ini
         const newState = room.presenceState()
-        
-        // Ekstrak ID profil dari orang-orang yang sedang terhubung
         const currentlyOnline: string[] = []
         for (const id in newState) {
-          // Setiap orang bisa punya beberapa tab/koneksi, kita ambil profil_id pertama yang mereka kirim
           const presenceArray = newState[id] as any[]
           if (presenceArray.length > 0 && presenceArray[0].profile_id) {
             currentlyOnline.push(presenceArray[0].profile_id)
           }
         }
-        
-        // Simpan daftar ID yang online ke state
         setOnlineUsers(currentlyOnline)
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          // Karena di Home kita belum tau user pakai profil yang mana,
-          // kita hanya "mendengarkan" (track status kosong) agar bisa melihat siapa yang online.
-          // Nanti di halaman profil masing-masing, barulah mereka mengirimkan 'profile_id' mereka.
           await room.track({ isHome: true })
         }
       })
@@ -69,26 +59,32 @@ export default function Home() {
       
       <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-3xl w-full">
         {profiles.map(p => {
-          // Cek apakah ID profil ini ada di daftar onlineUsers
           const isOnline = onlineUsers.includes(p.id)
 
           return (
             <Link key={p.id} href={`/profile/${p.id}`} className="bg-[#1a1d24] border border-gray-800 p-6 rounded-2xl hover:border-yellow-500 hover:scale-105 transition-all flex flex-col items-center gap-4 group">
-              <div className="w-20 h-20 rounded-full border-2 border-gray-600 overflow-hidden relative shadow-lg">
+              
+              {/* --- WADAH UTAMA (Relative, tanpa overflow-hidden) --- */}
+              <div className="relative">
                 
-                {/* --- INDIKATOR ONLINE (TITIK HIJAU) --- */}
+                {/* 1. Foto Profil (Diberi overflow-hidden agar bulat) */}
+                <div className="w-20 h-20 rounded-full border-2 border-gray-600 overflow-hidden shadow-lg">
+                  {p.avatar_url ? (
+                    <img src={p.avatar_url} className="w-full h-full object-cover group-hover:scale-110 transition duration-500" alt={p.name} />
+                  ) : (
+                    <div className="w-full h-full bg-gray-800 flex items-center justify-center text-3xl font-bold text-gray-500">
+                      {p.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Indikator Online (Melayang bebas di pojok kanan bawah) */}
                 {isOnline && (
-                  <div className="absolute top-1 right-1 w-4 h-4 bg-green-500 border-2 border-[#1a1d24] rounded-full z-10 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]"></div>
+                  <div className="absolute bottom-0 right-0 w-6 h-6 bg-green-500 border-4 border-[#1a1d24] rounded-full z-20 shadow-sm"></div>
                 )}
                 
-                {p.avatar_url ? (
-                  <img src={p.avatar_url} className="w-full h-full object-cover group-hover:scale-110 transition duration-500" alt={p.name} />
-                ) : (
-                  <div className="w-full h-full bg-gray-800 flex items-center justify-center text-3xl font-bold text-gray-500">
-                    {p.name.charAt(0).toUpperCase()}
-                  </div>
-                )}
               </div>
+
               <p className="font-bold font-mono tracking-wider">{p.name}</p>
             </Link>
           )
